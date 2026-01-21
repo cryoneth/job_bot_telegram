@@ -4,14 +4,16 @@ A personal Telegram bot that monitors channels for job postings, matches them ag
 
 ## Features
 
+- **Multi-User Support** - Multiple authorized users can each upload their own CV and get personalized alerts
 - **Channel Monitoring** - Listens to multiple Telegram channels simultaneously via MTProto
 - **Smart Job Detection** - Classifies messages as job posts using keyword analysis
 - **CV Matching** - Scores jobs against your CV using sentence-transformers (all-MiniLM-L6-v2)
 - **Web Scraping** - Fetches additional job details from application URLs
-- **Encrypted CV Storage** - Your CV is encrypted at rest using Fernet
-- **Configurable Filters** - Set keywords, location preferences, remote requirements, seniority level
+- **Encrypted CV Storage** - Each user's CV is encrypted separately at rest using Fernet
+- **Per-User Filters** - Each user can set their own keywords, location, remote preferences, seniority level, and threshold
 - **Deduplication** - Avoids alerting you about the same job twice
 - **Persistent State** - Survives restarts with SQLite database
+- **Interactive Menu** - Button-based interface for easy bot control
 
 ## Tech Stack
 
@@ -61,8 +63,9 @@ A personal Telegram bot that monitors channels for job postings, matches them ag
    TELEGRAM_API_HASH=your_api_hash      # From my.telegram.org
    BOT_TOKEN=your_bot_token             # From @BotFather
    OWNER_USER_ID=your_user_id           # From @userinfobot
+   AUTHORIZED_USERS=                    # Comma-separated user IDs (optional)
    CV_ENCRYPTION_KEY=                   # Auto-generated on first run
-   MATCH_THRESHOLD=70                   # Minimum score to trigger alerts
+   MATCH_THRESHOLD=70                   # Default minimum score for alerts
    ```
 
 5. **Run the bot**
@@ -146,9 +149,23 @@ The matching algorithm scores jobs from 0-100:
   - -10 if excluded keyword found
   - -10 if location doesn't match preference
 
+## Multi-User Support
+
+The bot supports multiple authorized users, each with their own:
+- **CV** - Stored separately as `cv_{user_id}.enc`
+- **Filters** - Keywords, location, remote preference, seniority
+- **Threshold** - Individual match score threshold
+
+**Adding users:**
+1. Get the user's Telegram ID (they can use [@userinfobot](https://t.me/userinfobot))
+2. Add their ID to `AUTHORIZED_USERS` in `.env`: `AUTHORIZED_USERS=123456,789012`
+3. Restart the bot
+
+When a job is detected, the bot matches it against ALL users with CVs and sends personalized alerts to each user who scores above their threshold.
+
 ## Security
 
-- CV is encrypted at rest using Fernet symmetric encryption
+- Each user's CV is encrypted separately using Fernet symmetric encryption
 - Encryption key stored in `.env` (not committed to git)
 - Telegram session file excluded from git
 - Database excluded from git
