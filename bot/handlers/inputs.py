@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import re
 from typing import TYPE_CHECKING
@@ -18,6 +19,22 @@ if TYPE_CHECKING:
     from bot.app import BotApp
 
 logger = logging.getLogger(__name__)
+
+
+def extract_text_from_pdf(pdf_bytes: bytes) -> str:
+    """Extract text from PDF bytes."""
+    try:
+        from PyPDF2 import PdfReader
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        text_parts = []
+        for page in reader.pages:
+            text = page.extract_text()
+            if text:
+                text_parts.append(text)
+        return "\n".join(text_parts)
+    except Exception as e:
+        logger.error(f"Error extracting PDF text: {e}")
+        raise
 
 
 def setup_inputs_router(app: "BotApp") -> Router:
@@ -166,17 +183,25 @@ def setup_inputs_router(app: "BotApp") -> Router:
 
         # Check for document
         if message.document:
-            if message.document.file_size > 1024 * 1024:  # 1MB limit
+            if message.document.file_size > 5 * 1024 * 1024:  # 5MB limit for PDFs
                 await message.answer(
-                    "❌ File too large. Max 1MB.",
+                    "❌ File too large. Max 5MB.",
                     reply_markup=cv_menu(app.matcher.has_cv(user_id)),
                 )
                 return
 
             try:
                 file = await message.bot.get_file(message.document.file_id)
-                file_bytes = await message.bot.download_file(file.file_path)
-                cv_text = file_bytes.read().decode("utf-8")
+                file_obj = await message.bot.download_file(file.file_path)
+                file_bytes = file_obj.read()
+
+                # Check file type
+                file_name = message.document.file_name or ""
+                if file_name.lower().endswith(".pdf"):
+                    cv_text = extract_text_from_pdf(file_bytes)
+                else:
+                    # Try to decode as text
+                    cv_text = file_bytes.decode("utf-8")
             except Exception as e:
                 await message.answer(
                     f"❌ Error reading file: {e}",
