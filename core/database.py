@@ -113,7 +113,36 @@ class Database:
         self._connection.row_factory = aiosqlite.Row
         await self._connection.executescript(SCHEMA)
         await self._connection.commit()
+
+        # Run migrations for existing databases
+        await self._run_migrations()
+
         logger.info(f"Connected to database: {self.db_path}")
+
+    async def _run_migrations(self) -> None:
+        """Run database migrations for schema updates."""
+        if not self._connection:
+            return
+
+        # Check if filters table has user_id column
+        async with self._connection.execute("PRAGMA table_info(filters)") as cursor:
+            columns = [row[1] for row in await cursor.fetchall()]
+            if "user_id" not in columns:
+                logger.info("Migrating filters table: adding user_id column")
+                await self._connection.execute(
+                    "ALTER TABLE filters ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0"
+                )
+                await self._connection.commit()
+
+        # Check if matched_jobs table has user_id column
+        async with self._connection.execute("PRAGMA table_info(matched_jobs)") as cursor:
+            columns = [row[1] for row in await cursor.fetchall()]
+            if "user_id" not in columns:
+                logger.info("Migrating matched_jobs table: adding user_id column")
+                await self._connection.execute(
+                    "ALTER TABLE matched_jobs ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0"
+                )
+                await self._connection.commit()
 
     async def close(self) -> None:
         """Close the database connection."""
