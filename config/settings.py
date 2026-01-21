@@ -26,6 +26,22 @@ class Settings(BaseSettings):
     # Owner user ID (for receiving alerts)
     owner_user_id: int = Field(..., description="Your Telegram User ID")
 
+    # Additional authorized users (comma-separated list of user IDs)
+    authorized_users: str = Field(
+        default="", description="Comma-separated list of additional authorized user IDs"
+    )
+
+    @property
+    def all_authorized_users(self) -> set[int]:
+        """Get all authorized user IDs including owner."""
+        users = {self.owner_user_id}
+        if self.authorized_users:
+            for uid in self.authorized_users.split(","):
+                uid = uid.strip()
+                if uid.isdigit():
+                    users.add(int(uid))
+        return users
+
     # Encryption key (auto-generated if not set)
     cv_encryption_key: Optional[str] = Field(
         default=None, description="Fernet encryption key for CV"

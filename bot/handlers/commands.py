@@ -23,8 +23,8 @@ def setup_commands_router(app: "BotApp") -> Router:
     @router.message(Command("start"))
     async def cmd_start(message: Message) -> None:
         """Handle /start command."""
-        if message.from_user and message.from_user.id != app.owner_id:
-            await message.answer("This bot is private.")
+        if message.from_user and not app.is_authorized(message.from_user.id):
+            await message.answer("This bot is private. Contact the owner for access.")
             return
 
         welcome_text = """
@@ -40,7 +40,7 @@ Use the menu below to get started:
     @router.message(Command("menu"))
     async def cmd_menu(message: Message) -> None:
         """Handle /menu command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         await message.answer(
@@ -52,7 +52,7 @@ Use the menu below to get started:
     @router.message(Command("help"))
     async def cmd_help(message: Message) -> None:
         """Handle /help command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         help_text = """
@@ -90,7 +90,7 @@ Use the menu below to get started:
     @router.message(Command("status"))
     async def cmd_status(message: Message) -> None:
         """Handle /status command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         try:
@@ -133,7 +133,7 @@ Use the menu below to get started:
     @router.message(Command("pause"))
     async def cmd_pause(message: Message) -> None:
         """Handle /pause command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         if app.is_paused:
@@ -146,7 +146,7 @@ Use the menu below to get started:
     @router.message(Command("resume"))
     async def cmd_resume(message: Message) -> None:
         """Handle /resume command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         if not app.is_paused:
@@ -159,7 +159,7 @@ Use the menu below to get started:
     @router.message(Command("test"))
     async def cmd_test(message: Message) -> None:
         """Handle /test command - test with a sample job post."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         if not app.cv_manager.has_cv:

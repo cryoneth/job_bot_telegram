@@ -29,7 +29,7 @@ def setup_cv_router(app: "BotApp") -> Router:
     @router.message(Command("setcv"))
     async def cmd_set_cv(message: Message, state: FSMContext) -> None:
         """Handle /setcv command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         # Check if CV text was provided with command
@@ -53,7 +53,7 @@ def setup_cv_router(app: "BotApp") -> Router:
     @router.message(CVStates.waiting_for_cv, F.text)
     async def handle_cv_input(message: Message, state: FSMContext) -> None:
         """Handle CV text input."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         if message.text == "/cancel":
@@ -67,7 +67,7 @@ def setup_cv_router(app: "BotApp") -> Router:
     @router.message(Command("clearcv"))
     async def cmd_clear_cv(message: Message) -> None:
         """Handle /clearcv command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         if app.cv_manager.has_cv:
@@ -83,7 +83,7 @@ def setup_cv_router(app: "BotApp") -> Router:
     @router.message(Command("showcv"))
     async def cmd_show_cv(message: Message) -> None:
         """Handle /showcv command - show CV summary (not full text)."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         if not app.cv_manager.has_cv:

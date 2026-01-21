@@ -71,6 +71,15 @@ class BotApp:
         """Get the owner's user ID."""
         return self._owner_id
 
+    @property
+    def authorized_users(self) -> set[int]:
+        """Get all authorized user IDs."""
+        return self.settings.all_authorized_users
+
+    def is_authorized(self, user_id: int) -> bool:
+        """Check if a user is authorized to use the bot."""
+        return user_id in self.authorized_users
+
     async def start(self) -> None:
         """Start the bot application."""
         logger.info("Starting Job Monitor Bot...")

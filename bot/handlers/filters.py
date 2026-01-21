@@ -23,7 +23,7 @@ def setup_filters_router(app: "BotApp") -> Router:
     @router.message(Command("setthreshold"))
     async def cmd_set_threshold(message: Message, command: CommandObject) -> None:
         """Handle /setthreshold command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         if not command.args:
@@ -53,7 +53,7 @@ def setup_filters_router(app: "BotApp") -> Router:
     @router.message(Command("addkeyword"))
     async def cmd_add_keyword(message: Message, command: CommandObject) -> None:
         """Handle /addkeyword command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         if not command.args:
@@ -75,7 +75,7 @@ def setup_filters_router(app: "BotApp") -> Router:
     @router.message(Command("excludekeyword"))
     async def cmd_exclude_keyword(message: Message, command: CommandObject) -> None:
         """Handle /excludekeyword command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         if not command.args:
@@ -97,7 +97,7 @@ def setup_filters_router(app: "BotApp") -> Router:
     @router.message(Command("setlocation"))
     async def cmd_set_location(message: Message, command: CommandObject) -> None:
         """Handle /setlocation command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         if not command.args:
@@ -121,7 +121,7 @@ def setup_filters_router(app: "BotApp") -> Router:
     @router.message(Command("setremote"))
     async def cmd_set_remote(message: Message, command: CommandObject) -> None:
         """Handle /setremote command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         if not command.args:
@@ -160,7 +160,7 @@ def setup_filters_router(app: "BotApp") -> Router:
     @router.message(Command("setseniority"))
     async def cmd_set_seniority(message: Message, command: CommandObject) -> None:
         """Handle /setseniority command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         valid_levels = [level.value for level in SeniorityLevel]
@@ -191,7 +191,7 @@ def setup_filters_router(app: "BotApp") -> Router:
     @router.message(Command("showfilters"))
     async def cmd_show_filters(message: Message) -> None:
         """Handle /showfilters command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         try:
@@ -239,7 +239,7 @@ def setup_filters_router(app: "BotApp") -> Router:
     @router.message(Command("clearfilters"))
     async def cmd_clear_filters(message: Message) -> None:
         """Handle /clearfilters command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         try:

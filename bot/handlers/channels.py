@@ -21,7 +21,7 @@ def setup_channels_router(app: "BotApp") -> Router:
     @router.message(Command("addchannel"))
     async def cmd_add_channel(message: Message, command: CommandObject) -> None:
         """Handle /addchannel command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         if not command.args:
@@ -67,7 +67,7 @@ def setup_channels_router(app: "BotApp") -> Router:
     @router.message(Command("removechannel"))
     async def cmd_remove_channel(message: Message, command: CommandObject) -> None:
         """Handle /removechannel command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         if not command.args:
@@ -125,7 +125,7 @@ def setup_channels_router(app: "BotApp") -> Router:
     @router.message(Command("listchannels"))
     async def cmd_list_channels(message: Message) -> None:
         """Handle /listchannels command."""
-        if message.from_user and message.from_user.id != app.owner_id:
+        if message.from_user and not app.is_authorized(message.from_user.id):
             return
 
         try:
