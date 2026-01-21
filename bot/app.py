@@ -19,10 +19,12 @@ from services.job_classifier import JobClassifier
 from services.web_scraper import WebScraper
 
 from .alerts import AlertSender
+from .handlers.callbacks import setup_callbacks_router
 from .handlers.channels import setup_channels_router
 from .handlers.commands import setup_commands_router
 from .handlers.cv import setup_cv_router
 from .handlers.filters import setup_filters_router
+from .handlers.inputs import setup_inputs_router
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +133,8 @@ class BotApp:
     def _setup_routers(self) -> None:
         """Setup all command routers."""
         self.dispatcher.include_router(setup_commands_router(self))
+        self.dispatcher.include_router(setup_callbacks_router(self))
+        self.dispatcher.include_router(setup_inputs_router(self))
         self.dispatcher.include_router(setup_channels_router(self))
         self.dispatcher.include_router(setup_filters_router(self))
         self.dispatcher.include_router(setup_cv_router(self))

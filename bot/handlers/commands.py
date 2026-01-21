@@ -7,6 +7,8 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
+from bot.menu import main_menu
+
 if TYPE_CHECKING:
     from bot.app import BotApp
 
@@ -26,26 +28,26 @@ def setup_commands_router(app: "BotApp") -> Router:
             return
 
         welcome_text = """
-Welcome to Job Monitor Bot!
+**Job Monitor Bot**
 
-I'll monitor Telegram channels for job postings and alert you when I find matches for your CV.
+I monitor Telegram channels for job postings and alert you when I find matches for your CV.
 
-**Quick Setup:**
-1. Set your CV: `/setcv` then paste your CV
-2. Add channels: `/addchannel @channel_name`
-3. Optionally configure filters
-
-**Commands:**
-/help - Show all commands
-/status - Show bot status
-/setcv - Set your CV
-/addchannel - Add a channel to monitor
-/showfilters - View current filters
-
-Ready to get started?
+Use the menu below to get started:
         """.strip()
 
-        await message.answer(welcome_text, parse_mode="Markdown")
+        await message.answer(welcome_text, reply_markup=main_menu(), parse_mode="Markdown")
+
+    @router.message(Command("menu"))
+    async def cmd_menu(message: Message) -> None:
+        """Handle /menu command."""
+        if message.from_user and message.from_user.id != app.owner_id:
+            return
+
+        await message.answer(
+            "**Job Monitor Bot**\n\nSelect an option:",
+            reply_markup=main_menu(),
+            parse_mode="Markdown",
+        )
 
     @router.message(Command("help"))
     async def cmd_help(message: Message) -> None:
