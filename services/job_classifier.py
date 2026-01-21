@@ -96,18 +96,18 @@ class JobClassifier:
     # Minimum number of keywords required
     MIN_KEYWORDS = 2
 
-    # Seniority patterns
+    # Seniority patterns (ordered from highest to lowest for priority matching)
     SENIORITY_PATTERNS = {
-        SeniorityLevel.INTERN: r"\b(intern|internship|trainee|apprentice)\b",
-        SeniorityLevel.JUNIOR: r"\b(junior|jr\.?|entry[- ]level|associate)\b",
-        SeniorityLevel.MID: r"\b(mid[- ]?level|intermediate|regular)\b",
-        SeniorityLevel.SENIOR: r"\b(senior|sr\.?|experienced)\b",
-        SeniorityLevel.LEAD: r"\b(lead|team lead|tech lead)\b",
-        SeniorityLevel.PRINCIPAL: r"\b(principal|staff)\b",
-        SeniorityLevel.MANAGER: r"\b(manager|engineering manager)\b",
-        SeniorityLevel.DIRECTOR: r"\b(director)\b",
-        SeniorityLevel.VP: r"\b(vp|vice president)\b",
         SeniorityLevel.EXECUTIVE: r"\b(cto|ceo|cfo|coo|c-level|chief)\b",
+        SeniorityLevel.VP: r"\b(vp|vice president|head of)\b",
+        SeniorityLevel.DIRECTOR: r"\b(director)\b",
+        SeniorityLevel.PRINCIPAL: r"\b(principal|staff engineer|staff)\b",
+        SeniorityLevel.MANAGER: r"\b(manager|engineering manager)\b",
+        SeniorityLevel.LEAD: r"\b(lead|team lead|tech lead)\b",
+        SeniorityLevel.SENIOR: r"\b(senior|sr\.?)\b",
+        SeniorityLevel.MID: r"\b(mid[- ]?level|intermediate|regular)\b",
+        SeniorityLevel.JUNIOR: r"\b(junior|jr\.?|entry[- ]level|associate)\b",
+        SeniorityLevel.INTERN: r"\b(intern|internship|trainee|apprentice)\b",
     }
 
     # Remote work patterns
@@ -229,6 +229,8 @@ class JobClassifier:
             r"(?:Company|Organization|Employer)[:\s]+([A-Za-z0-9\s&\-\.]+)",
             # "Join TechCorp"
             r"Join\s+([A-Z][A-Za-z0-9\s&\-\.]+?)(?:\s+as|\s+team|!|,|\.|\n)",
+            # "About CompanyName" section header
+            r"About\s+([A-Z][A-Za-z0-9]+)(?:\s|$|\n)",
         ]
 
         for pattern in patterns:
@@ -240,25 +242,39 @@ class JobClassifier:
                 if 2 <= len(company) <= 50:
                     return company
 
+        # Try to extract from URL in text
+        url_match = re.search(r"https?://(?:www\.)?([a-zA-Z0-9\-]+)\.", text)
+        if url_match:
+            domain = url_match.group(1)
+            # Skip common non-company domains
+            skip_domains = ["linkedin", "indeed", "glassdoor", "github", "twitter", "t", "x", "google", "bit", "tinyurl"]
+            if domain.lower() not in skip_domains and len(domain) >= 2:
+                # Capitalize the domain name
+                return domain.capitalize()
+
         return None
 
     def _extract_location(self, text: str) -> Optional[str]:
         """Extract location from text."""
         patterns = [
-            # "Location: City, Country"
-            r"(?:Location|Based in|Office)[:\s]+([A-Za-z\s,]+)",
-            # "in San Francisco, CA"
-            r"(?:based |located )?in\s+([A-Z][A-Za-z\s]+,\s*[A-Z]{2,})",
-            # City names with country codes
-            r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,\s*[A-Z]{2,3})\b",
+            # "Location: City, Country" or "Location: Remote"
+            r"(?:Location|Based in|Office in|Located in)[:\s]+([A-Z][A-Za-z\s,]{2,30}?)(?:\.|,\s*[a-z]|\n|$)",
+            # "City, State/Country" format - e.g., "New York, NY" or "London, UK"
+            r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2,3})\b",
+            # "in San Francisco" (followed by punctuation or newline)
+            r"(?:based |located |position )?in\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*(?:[,\.\n]|$)",
         ]
 
         for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
+            match = re.search(pattern, text)
             if match:
-                location = match.group(1).strip()
-                if 3 <= len(location) <= 50:
-                    return location
+                location = match.group(1).strip().rstrip(",.")
+                # Validate it looks like a location (not random text)
+                if 2 <= len(location) <= 40:
+                    # Skip if it contains job-related words (false positive)
+                    skip_words = ["team", "company", "role", "position", "job", "work", "stack"]
+                    if not any(word in location.lower() for word in skip_words):
+                        return location
 
         return None
 

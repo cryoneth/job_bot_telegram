@@ -70,51 +70,55 @@ class AlertSender:
 
         # Header with score
         score_emoji = self._get_score_emoji(match_result.score)
-        lines.append(f"{score_emoji} **Job Match (Score: {match_result.score}/100)**")
+        lines.append(f"{score_emoji} **Job Match ({match_result.score}/100)**")
         lines.append("")
 
-        # Job title and company
-        title_line = f"**{job_post.role_title or 'Job Posting'}**"
+        # Job details section
+        lines.append(f"📋 **{job_post.role_title or 'Job Posting'}**")
+
         if job_post.company:
-            title_line += f" @ {job_post.company}"
-        lines.append(title_line)
+            lines.append(f"🏢 {job_post.company}")
+
+        # Location
+        if job_post.is_remote and job_post.location:
+            lines.append(f"📍 {job_post.location} (Remote)")
+        elif job_post.is_remote:
+            lines.append("📍 Remote")
+        elif job_post.location:
+            lines.append(f"📍 {job_post.location}")
+
+        # Level
+        if job_post.seniority:
+            lines.append(f"💼 {job_post.seniority.value.title()} Level")
+
+        # Salary
+        if job_post.salary_info:
+            lines.append(f"💰 {job_post.salary_info}")
+
         lines.append("")
 
-        # Match reasons
+        # Match reasons (deduplicated and cleaned)
         if match_result.match_reasons:
-            lines.append("**Why it matches:**")
-            for reason in match_result.match_reasons[:3]:
-                lines.append(f"• {reason}")
+            lines.append("✅ **Why it matches:**")
+            seen_reasons = set()
+            for reason in match_result.match_reasons:
+                # Normalize and deduplicate
+                reason_key = reason.lower().split(":")[0]  # Group by prefix
+                if reason_key not in seen_reasons:
+                    seen_reasons.add(reason_key)
+                    lines.append(f"• {reason}")
+                if len(seen_reasons) >= 3:
+                    break
             lines.append("")
 
-        # Job details
-        details = []
-        if job_post.location:
-            location_text = job_post.location
-            if job_post.is_remote:
-                location_text += " (Remote)"
-            details.append(f"📍 Location: {location_text}")
-        elif job_post.is_remote:
-            details.append("📍 Location: Remote")
-
-        if job_post.seniority:
-            details.append(f"📊 Level: {job_post.seniority.value.title()}")
-
-        if job_post.salary_info:
-            details.append(f"💰 Salary: {job_post.salary_info}")
-
-        if details:
-            lines.extend(details)
-            lines.append("")
-
-        # Application link
+        # Application link (prominent)
         if job_post.application_link:
             lines.append(f"🔗 [Apply Here]({job_post.application_link})")
 
         # Original message link
         lines.append(f"📨 [View on Telegram]({message.message_link})")
 
-        # Filter reasons (if any)
+        # Filter reasons / warnings (if any)
         if match_result.filter_reasons:
             lines.append("")
             lines.append("⚠️ **Notes:**")
