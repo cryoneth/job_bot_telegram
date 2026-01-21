@@ -36,7 +36,6 @@ CREATE TABLE IF NOT EXISTS processed_messages (
 -- Job posts that matched (per user)
 CREATE TABLE IF NOT EXISTS matched_jobs (
     id INTEGER PRIMARY KEY,
-    user_id INTEGER NOT NULL DEFAULT 0,
     channel_id TEXT NOT NULL,
     message_id INTEGER NOT NULL,
     role_title TEXT,
@@ -57,7 +56,6 @@ CREATE TABLE IF NOT EXISTS matched_jobs (
 -- User filters/preferences (per user)
 CREATE TABLE IF NOT EXISTS filters (
     id INTEGER PRIMARY KEY,
-    user_id INTEGER NOT NULL DEFAULT 0,
     filter_type TEXT NOT NULL,
     filter_value TEXT NOT NULL,
     is_active BOOLEAN DEFAULT TRUE,
@@ -93,9 +91,7 @@ CREATE INDEX IF NOT EXISTS idx_processed_messages_channel ON processed_messages(
 CREATE INDEX IF NOT EXISTS idx_processed_messages_hash ON processed_messages(content_hash);
 CREATE INDEX IF NOT EXISTS idx_processed_messages_date ON processed_messages(processed_at);
 CREATE INDEX IF NOT EXISTS idx_matched_jobs_date ON matched_jobs(created_at);
-CREATE INDEX IF NOT EXISTS idx_matched_jobs_user ON matched_jobs(user_id);
 CREATE INDEX IF NOT EXISTS idx_filters_type ON filters(filter_type);
-CREATE INDEX IF NOT EXISTS idx_filters_user ON filters(user_id);
 """
 
 
@@ -132,6 +128,9 @@ class Database:
                 await self._connection.execute(
                     "ALTER TABLE filters ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0"
                 )
+                await self._connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_filters_user ON filters(user_id)"
+                )
                 await self._connection.commit()
 
         # Check if matched_jobs table has user_id column
@@ -141,6 +140,9 @@ class Database:
                 logger.info("Migrating matched_jobs table: adding user_id column")
                 await self._connection.execute(
                     "ALTER TABLE matched_jobs ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0"
+                )
+                await self._connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_matched_jobs_user ON matched_jobs(user_id)"
                 )
                 await self._connection.commit()
 
