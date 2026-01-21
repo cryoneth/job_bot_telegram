@@ -78,7 +78,8 @@ def setup_callbacks_router(app: "BotApp") -> Router:
     @router.callback_query(F.data == "menu:cv")
     async def show_cv_menu(callback: CallbackQuery):
         """Show CV management menu."""
-        has_cv = app.matcher.has_cv
+        user_id = callback.from_user.id if callback.from_user else 0
+        has_cv = app.matcher.has_cv(user_id)
         status = "✅ CV loaded" if has_cv else "❌ No CV uploaded"
         await callback.message.edit_text(
             f"**📄 CV Management**\n\n{status}\n\nUpload your CV to enable job matching.",
@@ -90,7 +91,10 @@ def setup_callbacks_router(app: "BotApp") -> Router:
     @router.callback_query(F.data == "menu:settings")
     async def show_settings_menu(callback: CallbackQuery):
         """Show settings menu."""
-        threshold = await app.db.get_setting("threshold", str(app.settings.match_threshold))
+        user_id = callback.from_user.id if callback.from_user else 0
+        threshold = await app.db.get_user_setting(user_id, "threshold")
+        if not threshold:
+            threshold = await app.db.get_setting("threshold", str(app.settings.match_threshold))
         await callback.message.edit_text(
             f"**⚙️ Settings**\n\n"
             f"Match threshold: {threshold}/100\n"
@@ -103,15 +107,18 @@ def setup_callbacks_router(app: "BotApp") -> Router:
     @router.callback_query(F.data == "menu:status")
     async def show_status(callback: CallbackQuery):
         """Show bot status."""
+        user_id = callback.from_user.id if callback.from_user else 0
         channels = await app.db.get_channels(active_only=True)
-        threshold = await app.db.get_setting("threshold", str(app.settings.match_threshold))
+        threshold = await app.db.get_user_setting(user_id, "threshold")
+        if not threshold:
+            threshold = await app.db.get_setting("threshold", str(app.settings.match_threshold))
 
         status_lines = [
             "**📊 Bot Status**",
             "",
             f"Status: {'⏸ Paused' if app.is_paused else '✅ Running'}",
             f"Channels: {len(channels)} monitored",
-            f"CV: {'✅ Loaded' if app.matcher.has_cv else '❌ Not set'}",
+            f"CV: {'✅ Loaded' if app.matcher.has_cv(user_id) else '❌ Not set'}",
             f"Threshold: {threshold}/100",
         ]
 
@@ -250,8 +257,9 @@ def setup_callbacks_router(app: "BotApp") -> Router:
     @router.callback_query(F.data.startswith("remote:"))
     async def set_remote(callback: CallbackQuery):
         """Set remote preference."""
+        user_id = callback.from_user.id if callback.from_user else 0
         value = callback.data.split(":")[1]
-        await app.db.set_filter("remote", value)
+        await app.db.set_filter("remote", value, user_id=user_id)
         await callback.message.edit_text(
             f"✅ Remote preference set to: {value}",
             reply_markup=filters_menu(),
@@ -261,7 +269,8 @@ def setup_callbacks_router(app: "BotApp") -> Router:
     @router.callback_query(F.data == "filters:show")
     async def show_filters(callback: CallbackQuery):
         """Show current filters."""
-        filters = await app.db.get_filters()
+        user_id = callback.from_user.id if callback.from_user else 0
+        filters = await app.db.get_filters(user_id=user_id)
         if not filters:
             text = "No filters set.\n\nAdd some filters to customize your job matches."
         else:
@@ -302,7 +311,8 @@ def setup_callbacks_router(app: "BotApp") -> Router:
     @router.callback_query(F.data == "confirm:clear_filters")
     async def clear_filters(callback: CallbackQuery):
         """Clear all filters."""
-        await app.db.clear_filters()
+        user_id = callback.from_user.id if callback.from_user else 0
+        await app.db.clear_filters(user_id=user_id)
         await callback.message.edit_text(
             "✅ All filters cleared.",
             reply_markup=filters_menu(),
@@ -341,8 +351,10 @@ def setup_callbacks_router(app: "BotApp") -> Router:
     @router.callback_query(F.data == "confirm:clear_cv")
     async def clear_cv(callback: CallbackQuery):
         """Clear the CV."""
-        app.cv_manager.clear_cv()
-        app.matcher.clear_cv()
+        user_id = callback.from_user.id if callback.from_user else 0
+        app.cv_manager.clear_cv(user_id)
+        app.matcher.clear_cv(user_id)
+        await app.db.set_user_has_cv(user_id, False)
         await callback.message.edit_text(
             "✅ CV cleared.",
             reply_markup=cv_menu(False),
@@ -354,7 +366,10 @@ def setup_callbacks_router(app: "BotApp") -> Router:
     @router.callback_query(F.data == "settings:threshold")
     async def threshold_prompt(callback: CallbackQuery):
         """Show threshold options."""
-        current = await app.db.get_setting("threshold", str(app.settings.match_threshold))
+        user_id = callback.from_user.id if callback.from_user else 0
+        current = await app.db.get_user_setting(user_id, "threshold")
+        if not current:
+            current = await app.db.get_setting("threshold", str(app.settings.match_threshold))
         await callback.message.edit_text(
             f"**Set Match Threshold**\n\n"
             f"Current: {current}/100\n\n"
@@ -367,8 +382,9 @@ def setup_callbacks_router(app: "BotApp") -> Router:
     @router.callback_query(F.data.startswith("threshold:"))
     async def set_threshold(callback: CallbackQuery):
         """Set the threshold value."""
+        user_id = callback.from_user.id if callback.from_user else 0
         value = callback.data.split(":")[1]
-        await app.db.set_setting("threshold", value)
+        await app.db.set_user_setting(user_id, "threshold", value)
         await callback.message.edit_text(
             f"✅ Threshold set to {value}/100",
             reply_markup=settings_menu(app.is_paused),

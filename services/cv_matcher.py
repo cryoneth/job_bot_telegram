@@ -12,9 +12,20 @@ from core.models import JobPost, MatchResult, SeniorityLevel, UserFilters
 logger = logging.getLogger(__name__)
 
 
+class UserCVData:
+    """Stores CV data for a single user."""
+
+    def __init__(self, user_id: int, cv_text: str, embedding: np.ndarray, skills: set[str]):
+        self.user_id = user_id
+        self.cv_text = cv_text
+        self.embedding = embedding
+        self.skills = skills
+
+
 class CVMatcher:
     """
-    Matches job posts against a CV using hybrid scoring.
+    Matches job posts against CVs using hybrid scoring.
+    Supports multiple users with individual CVs.
 
     Scoring algorithm (0-100):
     - Semantic similarity: 0-60 points
@@ -39,6 +50,9 @@ class CVMatcher:
     def __init__(self):
         """Initialize the CV matcher."""
         self._model: Optional[SentenceTransformer] = None
+        # Per-user CV storage
+        self._user_cvs: dict[int, UserCVData] = {}
+        # Legacy single-user support (user_id=0)
         self._cv_text: Optional[str] = None
         self._cv_embedding: Optional[np.ndarray] = None
         self._cv_skills: set[str] = set()
@@ -50,42 +64,73 @@ class CVMatcher:
             self._model = SentenceTransformer(self.MODEL_NAME)
             logger.info("Model loaded successfully")
 
-    def set_cv(self, cv_text: str) -> None:
+    def set_cv(self, cv_text: str, user_id: int = 0) -> None:
         """
-        Set the CV to match against.
+        Set the CV to match against for a specific user.
 
         Args:
             cv_text: The CV content
+            user_id: The user ID (0 for legacy single-user mode)
         """
         self.load_model()
-        self._cv_text = cv_text
-        self._cv_embedding = self._model.encode(cv_text, convert_to_numpy=True)
-        self._cv_skills = self._extract_skills(cv_text)
-        logger.info(f"CV set with {len(self._cv_skills)} identified skills")
+        embedding = self._model.encode(cv_text, convert_to_numpy=True)
+        skills = self._extract_skills(cv_text)
 
-    def clear_cv(self) -> None:
-        """Clear the stored CV."""
-        self._cv_text = None
-        self._cv_embedding = None
-        self._cv_skills = set()
+        # Store in per-user dict
+        self._user_cvs[user_id] = UserCVData(
+            user_id=user_id,
+            cv_text=cv_text,
+            embedding=embedding,
+            skills=skills,
+        )
 
-    @property
-    def has_cv(self) -> bool:
-        """Check if CV is loaded."""
-        return self._cv_embedding is not None
+        # Legacy support
+        if user_id == 0:
+            self._cv_text = cv_text
+            self._cv_embedding = embedding
+            self._cv_skills = skills
 
-    def match(self, job_post: JobPost, filters: Optional[UserFilters] = None) -> MatchResult:
+        logger.info(f"CV set for user {user_id} with {len(skills)} identified skills")
+
+    def clear_cv(self, user_id: int = 0) -> None:
+        """Clear the stored CV for a user."""
+        self._user_cvs.pop(user_id, None)
+
+        # Legacy support
+        if user_id == 0:
+            self._cv_text = None
+            self._cv_embedding = None
+            self._cv_skills = set()
+
+        logger.info(f"CV cleared for user {user_id}")
+
+    def has_cv(self, user_id: int = 0) -> bool:
+        """Check if CV is loaded for a user."""
+        return user_id in self._user_cvs
+
+    def has_any_cv(self) -> bool:
+        """Check if any user has a CV loaded."""
+        return len(self._user_cvs) > 0
+
+    def get_users_with_cv(self) -> list[int]:
+        """Get list of user IDs that have CVs loaded."""
+        return list(self._user_cvs.keys())
+
+    def match(
+        self, job_post: JobPost, filters: Optional[UserFilters] = None, user_id: int = 0
+    ) -> MatchResult:
         """
-        Match a job post against the CV.
+        Match a job post against a user's CV.
 
         Args:
             job_post: The job post to match
             filters: User filter preferences
+            user_id: The user ID to match against
 
         Returns:
             MatchResult with score and reasons
         """
-        if not self.has_cv:
+        if not self.has_cv(user_id):
             return MatchResult(score=0, match_reasons=["No CV set"])
 
         if filters is None:
@@ -93,14 +138,18 @@ class CVMatcher:
 
         self.load_model()
 
+        user_cv = self._user_cvs[user_id]
+
         # Calculate semantic similarity
-        semantic_score = self._calculate_semantic_score(job_post.raw_text)
+        semantic_score = self._calculate_semantic_score(job_post.raw_text, user_cv.embedding)
         # Short posts tend to under-score semantically; give a small boost
         if len(job_post.raw_text) < 400:
             semantic_score *= 1.15
-            
+
         # Calculate keyword score
-        keyword_score, matched_skills = self._calculate_keyword_score(job_post.raw_text)
+        keyword_score, matched_skills = self._calculate_keyword_score(
+            job_post.raw_text, user_cv.skills
+        )
 
         # Apply rule-based adjustments
         adjustments, match_reasons, filter_reasons = self._apply_rules(
@@ -130,25 +179,37 @@ class CVMatcher:
 
         return result
 
-    def _calculate_semantic_score(self, job_text: str) -> float:
+    def _calculate_semantic_score(
+        self, job_text: str, cv_embedding: Optional[np.ndarray] = None
+    ) -> float:
         """Calculate semantic similarity score (0-60)."""
-        if not self._model or self._cv_embedding is None:
+        if not self._model:
+            return 0.0
+
+        # Use provided embedding or fall back to legacy
+        embedding = cv_embedding if cv_embedding is not None else self._cv_embedding
+        if embedding is None:
             return 0.0
 
         job_embedding = self._model.encode(job_text, convert_to_numpy=True)
 
         # Cosine similarity
-        similarity = np.dot(self._cv_embedding, job_embedding) / (
-            np.linalg.norm(self._cv_embedding) * np.linalg.norm(job_embedding)
+        similarity = np.dot(embedding, job_embedding) / (
+            np.linalg.norm(embedding) * np.linalg.norm(job_embedding)
         )
 
         # Scale to 0-60
         return float(similarity * self.MAX_SEMANTIC_SCORE)
 
-    def _calculate_keyword_score(self, job_text: str) -> tuple[float, set[str]]:
+    def _calculate_keyword_score(
+        self, job_text: str, cv_skills: Optional[set[str]] = None
+    ) -> tuple[float, set[str]]:
         """Calculate keyword bonus score (0-25)."""
+        # Use provided skills or fall back to legacy
+        skills = cv_skills if cv_skills is not None else self._cv_skills
+
         job_skills = self._extract_skills(job_text)
-        matched_skills = self._cv_skills & job_skills
+        matched_skills = skills & job_skills
 
         # +5 per matching skill, max 5 skills = 25 points
         num_matches = min(len(matched_skills), 8)
@@ -267,14 +328,23 @@ class CVMatcher:
 
         return skills
 
-    def get_cv_summary(self) -> dict:
-        """Get summary of loaded CV."""
-        if not self._cv_text:
+    def get_cv_summary(self, user_id: int = 0) -> dict:
+        """Get summary of loaded CV for a user."""
+        if user_id not in self._user_cvs:
+            # Legacy fallback
+            if user_id == 0 and self._cv_text:
+                return {
+                    "loaded": True,
+                    "length": len(self._cv_text),
+                    "skills_count": len(self._cv_skills),
+                    "skills": sorted(self._cv_skills)[:20],
+                }
             return {"loaded": False}
 
+        user_cv = self._user_cvs[user_id]
         return {
             "loaded": True,
-            "length": len(self._cv_text),
-            "skills_count": len(self._cv_skills),
-            "skills": sorted(self._cv_skills)[:20],  # Top 20 skills
+            "length": len(user_cv.cv_text),
+            "skills_count": len(user_cv.skills),
+            "skills": sorted(user_cv.skills)[:20],  # Top 20 skills
         }

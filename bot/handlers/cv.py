@@ -67,12 +67,14 @@ def setup_cv_router(app: "BotApp") -> Router:
     @router.message(Command("clearcv"))
     async def cmd_clear_cv(message: Message) -> None:
         """Handle /clearcv command."""
-        if message.from_user and not app.is_authorized(message.from_user.id):
+        if not message.from_user or not app.is_authorized(message.from_user.id):
             return
 
-        if app.cv_manager.has_cv:
-            app.cv_manager.clear_cv()
-            app.matcher.clear_cv()
+        user_id = message.from_user.id
+        if app.cv_manager.has_cv(user_id):
+            app.cv_manager.clear_cv(user_id)
+            app.matcher.clear_cv(user_id)
+            await app.db.set_user_has_cv(user_id, False)
             await message.answer(
                 "CV deleted.\n\n"
                 "Set a new CV with /setcv to continue matching jobs.",
@@ -83,16 +85,17 @@ def setup_cv_router(app: "BotApp") -> Router:
     @router.message(Command("showcv"))
     async def cmd_show_cv(message: Message) -> None:
         """Handle /showcv command - show CV summary (not full text)."""
-        if message.from_user and not app.is_authorized(message.from_user.id):
+        if not message.from_user or not app.is_authorized(message.from_user.id):
             return
 
-        if not app.cv_manager.has_cv:
+        user_id = message.from_user.id
+        if not app.cv_manager.has_cv(user_id):
             await message.answer(
                 "No CV stored.\n\nSet your CV with /setcv",
             )
             return
 
-        summary = app.matcher.get_cv_summary()
+        summary = app.matcher.get_cv_summary(user_id)
         if not summary.get("loaded"):
             await message.answer("CV stored but not loaded into matcher.")
             return
@@ -114,6 +117,11 @@ def setup_cv_router(app: "BotApp") -> Router:
 
 async def _save_cv(message: Message, cv_text: str, app: "BotApp") -> None:
     """Save CV and update matcher."""
+    if not message.from_user:
+        return
+
+    user_id = message.from_user.id
+
     if len(cv_text) < 50:
         await message.answer(
             "CV text is too short. Please provide more details about "
@@ -128,13 +136,16 @@ async def _save_cv(message: Message, cv_text: str, app: "BotApp") -> None:
         return
 
     try:
-        # Save encrypted CV
-        app.cv_manager.set_cv(cv_text)
+        # Save encrypted CV for this user
+        app.cv_manager.save_cv(cv_text, user_id)
 
-        # Load into matcher
-        app.matcher.set_cv(cv_text)
+        # Load into matcher for this user
+        app.matcher.set_cv(cv_text, user_id)
 
-        summary = app.matcher.get_cv_summary()
+        # Update database
+        await app.db.set_user_has_cv(user_id, True)
+
+        summary = app.matcher.get_cv_summary(user_id)
         skills_count = summary.get("skills_count", 0)
 
         await message.answer(
@@ -145,5 +156,5 @@ async def _save_cv(message: Message, cv_text: str, app: "BotApp") -> None:
             "Add channels with /addchannel to start monitoring.",
         )
     except Exception as e:
-        logger.error(f"Error saving CV: {e}")
+        logger.error(f"Error saving CV for user {user_id}: {e}")
         await message.answer(f"Error saving CV: {e}")

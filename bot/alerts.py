@@ -30,6 +30,7 @@ class AlertSender:
         message: TelegramMessage,
         job_post: JobPost,
         match_result: MatchResult,
+        user_id: Optional[int] = None,
     ) -> bool:
         """
         Send a job match alert.
@@ -38,25 +39,27 @@ class AlertSender:
             message: Original Telegram message
             job_post: Extracted job information
             match_result: Match scoring results
+            user_id: Target user ID (defaults to owner)
 
         Returns:
             True if sent successfully
         """
         alert_text = self._format_alert(message, job_post, match_result)
+        target_id = user_id if user_id is not None else self._owner_id
 
         try:
             await self._bot.send_message(
-                chat_id=self._owner_id,
+                chat_id=target_id,
                 text=alert_text,
                 parse_mode="Markdown",
                 disable_web_page_preview=True,
             )
             logger.info(
-                f"Alert sent: {job_post.summary} (score: {match_result.score})"
+                f"Alert sent to user {target_id}: {job_post.summary} (score: {match_result.score})"
             )
             return True
         except TelegramAPIError as e:
-            logger.error(f"Failed to send alert: {e}")
+            logger.error(f"Failed to send alert to user {target_id}: {e}")
             return False
 
     def _format_alert(

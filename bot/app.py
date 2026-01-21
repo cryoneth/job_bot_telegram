@@ -45,7 +45,7 @@ class BotApp:
         # Initialize components
         self.db = Database(settings.db_path)
         self.encryption = CVEncryption(settings.cv_encryption_key)
-        self.cv_manager = CVManager(self.encryption, settings.cv_path)
+        self.cv_manager = CVManager(self.encryption, settings.data_dir)
         self.listener = ChannelListener(
             api_id=settings.telegram_api_id,
             api_hash=settings.telegram_api_hash,
@@ -91,16 +91,8 @@ class BotApp:
         paused = await self.db.get_setting("paused", "false")
         self.is_paused = paused == "true"
 
-        # Load CV if exists
-        if self.cv_manager.has_cv:
-            cv_text = self.cv_manager.get_cv()
-            if cv_text:
-                self.matcher.set_cv(cv_text)
-                logger.info("CV loaded from storage")
-            else:
-                logger.warning("CV file exists but could not be decrypted - please re-upload with /setcv")
-        else:
-            logger.warning("No CV found - use /setcv to upload your CV")
+        # Load CVs for all users
+        await self._load_all_user_cvs()
 
         # Load monitored channels
         channels = await self.db.get_channels(active_only=True)
@@ -147,6 +139,32 @@ class BotApp:
         self.dispatcher.include_router(setup_channels_router(self))
         self.dispatcher.include_router(setup_filters_router(self))
         self.dispatcher.include_router(setup_cv_router(self))
+
+    async def _load_all_user_cvs(self) -> None:
+        """Load CVs for all users who have them stored."""
+        users_with_cv = self.cv_manager.get_users_with_cv()
+
+        if not users_with_cv:
+            # Try legacy migration for owner
+            if self.cv_manager.legacy_cv_path.exists():
+                self.cv_manager.migrate_legacy_cv(self.settings.owner_user_id)
+                users_with_cv = self.cv_manager.get_users_with_cv()
+
+        if not users_with_cv:
+            logger.warning("No CVs found - users can upload with /setcv")
+            return
+
+        loaded_count = 0
+        for user_id in users_with_cv:
+            cv_text = self.cv_manager.get_cv(user_id)
+            if cv_text:
+                self.matcher.set_cv(cv_text, user_id)
+                await self.db.set_user_has_cv(user_id, True)
+                loaded_count += 1
+            else:
+                logger.warning(f"CV file exists for user {user_id} but could not be decrypted")
+
+        logger.info(f"Loaded CVs for {loaded_count} user(s)")
 
     async def _on_channel_message(self, message: TelegramMessage) -> None:
         """Handle incoming channel messages."""
@@ -239,77 +257,100 @@ class BotApp:
                 except Exception as e:
                     logger.warning(f"Failed to scrape {job_post.application_link}: {e}")
 
-            # 4. CV matching
-            if not self.matcher.has_cv:
-                logger.warning("No CV set - skipping job match. Use /setcv to upload your CV")
+            # 4. CV matching - match against ALL users with CVs
+            users_with_cv = self.matcher.get_users_with_cv()
+
+            if not users_with_cv:
+                logger.warning("No users have CVs set - skipping job match")
                 if not is_test:
                     await self.deduplicator.mark_processed(
                         message, is_job_post=True, match_score=0
                     )
                 return
 
-            # Get user filters
-            filters = await self._get_user_filters()
-
-            # Match against CV
-            match_result = self.matcher.match(job_post, filters)
-            logger.info(f"Match score: {match_result.score}")
-
-            # Mark as processed
+            # Mark as processed (before matching to avoid duplicates)
             if not is_test:
                 await self.deduplicator.mark_processed(
-                    message, is_job_post=True, match_score=match_result.score
+                    message, is_job_post=True, match_score=0
                 )
 
-            # 5. Threshold check
-            threshold = int(
-                await self.db.get_setting("threshold", str(self.settings.match_threshold))
-            )
-
-            if match_result.score >= threshold:
-                # 6. Send alert
-                if is_test:
-                    await self.alert_sender.send_test_result(job_post, match_result)
-                else:
-                    await self.alert_sender.send_job_alert(
-                        message, job_post, match_result
-                    )
-
-                    # Save to database
-                    await self.db.add_matched_job(
-                        channel_id=message.channel_id,
-                        message_id=message.message_id,
-                        match_score=match_result.score,
-                        raw_text=message.text,
-                        role_title=job_post.role_title,
-                        company=job_post.company,
-                        location=job_post.location,
-                        is_remote=job_post.is_remote,
-                        seniority=job_post.seniority.value if job_post.seniority else None,
-                        salary_info=job_post.salary_info,
-                        requirements=job_post.requirements,
-                        application_link=job_post.application_link,
-                        match_reasons=match_result.match_reasons,
-                        filter_reasons=match_result.filter_reasons,
-                    )
-            elif is_test:
-                await self.alert_sender.send_test_result(job_post, match_result)
-                await self.alert_sender.send_notification(
-                    f"Score {match_result.score} is below threshold {threshold}. "
-                    "This job would not trigger an alert."
+            # Match and alert each user individually
+            for user_id in users_with_cv:
+                await self._match_and_alert_user(
+                    user_id, message, job_post, is_test
                 )
 
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
 
-    async def _get_user_filters(self) -> UserFilters:
+    async def _match_and_alert_user(
+        self,
+        user_id: int,
+        message: TelegramMessage,
+        job_post: JobPost,
+        is_test: bool = False,
+    ) -> None:
+        """Match a job post against a specific user's CV and send alert if matched."""
+        # Get user-specific filters
+        filters = await self._get_user_filters(user_id)
+
+        # Match against user's CV
+        match_result = self.matcher.match(job_post, filters, user_id)
+        logger.info(f"Match score for user {user_id}: {match_result.score}")
+
+        # Get user-specific threshold
+        threshold = await self._get_user_threshold(user_id)
+
+        if match_result.score >= threshold:
+            # Send alert to this user
+            if is_test:
+                await self.alert_sender.send_test_result(job_post, match_result)
+            else:
+                await self.alert_sender.send_job_alert(
+                    message, job_post, match_result, user_id=user_id
+                )
+
+                # Save to database for this user
+                await self.db.add_matched_job(
+                    channel_id=message.channel_id,
+                    message_id=message.message_id,
+                    match_score=match_result.score,
+                    raw_text=message.text,
+                    user_id=user_id,
+                    role_title=job_post.role_title,
+                    company=job_post.company,
+                    location=job_post.location,
+                    is_remote=job_post.is_remote,
+                    seniority=job_post.seniority.value if job_post.seniority else None,
+                    salary_info=job_post.salary_info,
+                    requirements=job_post.requirements,
+                    application_link=job_post.application_link,
+                    match_reasons=match_result.match_reasons,
+                    filter_reasons=match_result.filter_reasons,
+                )
+        elif is_test:
+            await self.alert_sender.send_test_result(job_post, match_result)
+            await self.alert_sender.send_notification(
+                f"Score {match_result.score} is below threshold {threshold}. "
+                "This job would not trigger an alert."
+            )
+
+    async def _get_user_filters(self, user_id: int = 0) -> UserFilters:
         """Load user filters from database."""
-        filters = await self.db.get_filters()
+        filters = await self.db.get_filters(user_id=user_id)
         user_filters = UserFilters.from_db_filters(filters)
-        user_filters.threshold = int(
-            await self.db.get_setting("threshold", str(self.settings.match_threshold))
-        )
+        user_filters.threshold = await self._get_user_threshold(user_id)
         return user_filters
+
+    async def _get_user_threshold(self, user_id: int = 0) -> int:
+        """Get the match threshold for a user."""
+        # Try user-specific setting first
+        user_threshold = await self.db.get_user_setting(user_id, "threshold")
+        if user_threshold:
+            return int(user_threshold)
+        # Fall back to global setting
+        global_threshold = await self.db.get_setting("threshold", str(self.settings.match_threshold))
+        return int(global_threshold)
 
     async def run(self) -> None:
         """Run the bot (blocking)."""

@@ -12,7 +12,7 @@ import aiosqlite
 logger = logging.getLogger(__name__)
 
 SCHEMA = """
--- Monitored channels
+-- Monitored channels (shared across users)
 CREATE TABLE IF NOT EXISTS channels (
     id INTEGER PRIMARY KEY,
     channel_id TEXT UNIQUE NOT NULL,
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS channels (
     is_active BOOLEAN DEFAULT TRUE
 );
 
--- Processed messages (for deduplication)
+-- Processed messages (for deduplication - shared)
 CREATE TABLE IF NOT EXISTS processed_messages (
     id INTEGER PRIMARY KEY,
     channel_id TEXT NOT NULL,
@@ -33,9 +33,10 @@ CREATE TABLE IF NOT EXISTS processed_messages (
     UNIQUE(channel_id, message_id)
 );
 
--- Job posts that matched
+-- Job posts that matched (per user)
 CREATE TABLE IF NOT EXISTS matched_jobs (
     id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL DEFAULT 0,
     channel_id TEXT NOT NULL,
     message_id INTEGER NOT NULL,
     role_title TEXT,
@@ -53,19 +54,38 @@ CREATE TABLE IF NOT EXISTS matched_jobs (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- User filters/preferences
+-- User filters/preferences (per user)
 CREATE TABLE IF NOT EXISTS filters (
     id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL DEFAULT 0,
     filter_type TEXT NOT NULL,
     filter_value TEXT NOT NULL,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Settings
+-- User settings (per user)
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY (user_id, key)
+);
+
+-- Legacy settings (for backwards compatibility)
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+
+-- Users table
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    username TEXT,
+    first_name TEXT,
+    has_cv BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create indexes for common queries
@@ -73,7 +93,9 @@ CREATE INDEX IF NOT EXISTS idx_processed_messages_channel ON processed_messages(
 CREATE INDEX IF NOT EXISTS idx_processed_messages_hash ON processed_messages(content_hash);
 CREATE INDEX IF NOT EXISTS idx_processed_messages_date ON processed_messages(processed_at);
 CREATE INDEX IF NOT EXISTS idx_matched_jobs_date ON matched_jobs(created_at);
+CREATE INDEX IF NOT EXISTS idx_matched_jobs_user ON matched_jobs(user_id);
 CREATE INDEX IF NOT EXISTS idx_filters_type ON filters(filter_type);
+CREATE INDEX IF NOT EXISTS idx_filters_user ON filters(user_id);
 """
 
 
@@ -194,13 +216,14 @@ class Database:
                 (channel_id, message_id, content_hash, is_job_post, match_score),
             )
 
-    # Matched jobs operations
+    # Matched jobs operations (per user)
     async def add_matched_job(
         self,
         channel_id: str,
         message_id: int,
         match_score: int,
         raw_text: str,
+        user_id: int = 0,
         role_title: Optional[str] = None,
         company: Optional[str] = None,
         location: Optional[str] = None,
@@ -212,15 +235,16 @@ class Database:
         match_reasons: Optional[list[str]] = None,
         filter_reasons: Optional[list[str]] = None,
     ) -> int:
-        """Add a matched job. Returns the job ID."""
+        """Add a matched job for a user. Returns the job ID."""
         async with self.transaction() as conn:
             cursor = await conn.execute(
                 """INSERT INTO matched_jobs
-                   (channel_id, message_id, role_title, company, location, is_remote,
+                   (user_id, channel_id, message_id, role_title, company, location, is_remote,
                     seniority, salary_info, requirements, application_link,
                     match_score, match_reasons, filter_reasons, raw_text)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
+                    user_id,
                     channel_id,
                     message_id,
                     role_title,
@@ -239,14 +263,17 @@ class Database:
             )
             return cursor.lastrowid or 0
 
-    async def get_recent_jobs(self, limit: int = 10) -> list[dict[str, Any]]:
-        """Get recent matched jobs."""
+    async def get_recent_jobs(self, limit: int = 10, user_id: Optional[int] = None) -> list[dict[str, Any]]:
+        """Get recent matched jobs, optionally filtered by user."""
         if not self._connection:
             raise RuntimeError("Database not connected")
-        async with self._connection.execute(
-            "SELECT * FROM matched_jobs ORDER BY created_at DESC LIMIT ?",
-            (limit,),
-        ) as cursor:
+        if user_id is not None:
+            query = "SELECT * FROM matched_jobs WHERE user_id = ? ORDER BY created_at DESC LIMIT ?"
+            params = (user_id, limit)
+        else:
+            query = "SELECT * FROM matched_jobs ORDER BY created_at DESC LIMIT ?"
+            params = (limit,)
+        async with self._connection.execute(query, params) as cursor:
             rows = await cursor.fetchall()
             jobs = []
             for row in rows:
@@ -258,18 +285,32 @@ class Database:
                 jobs.append(job)
             return jobs
 
-    async def get_last_match(self) -> Optional[dict[str, Any]]:
-        """Get the most recent matched job."""
-        jobs = await self.get_recent_jobs(1)
+    async def get_last_match(self, user_id: Optional[int] = None) -> Optional[dict[str, Any]]:
+        """Get the most recent matched job, optionally for a specific user."""
+        jobs = await self.get_recent_jobs(1, user_id)
         return jobs[0] if jobs else None
 
-    # Filter operations
-    async def add_filter(self, filter_type: str, filter_value: str) -> int:
+    # Filter operations (per user)
+    async def add_filter(self, filter_type: str, filter_value: str, user_id: int = 0) -> int:
         """Add a filter. Returns the filter ID."""
         async with self.transaction() as conn:
             cursor = await conn.execute(
-                "INSERT INTO filters (filter_type, filter_value) VALUES (?, ?)",
-                (filter_type, filter_value),
+                "INSERT INTO filters (user_id, filter_type, filter_value) VALUES (?, ?, ?)",
+                (user_id, filter_type, filter_value),
+            )
+            return cursor.lastrowid or 0
+
+    async def set_filter(self, filter_type: str, filter_value: str, user_id: int = 0) -> int:
+        """Set a filter (replaces existing of same type for user). Returns the filter ID."""
+        async with self.transaction() as conn:
+            # Remove existing filter of this type for user
+            await conn.execute(
+                "DELETE FROM filters WHERE user_id = ? AND filter_type = ?",
+                (user_id, filter_type),
+            )
+            cursor = await conn.execute(
+                "INSERT INTO filters (user_id, filter_type, filter_value) VALUES (?, ?, ?)",
+                (user_id, filter_type, filter_value),
             )
             return cursor.lastrowid or 0
 
@@ -282,13 +323,13 @@ class Database:
             return cursor.rowcount > 0
 
     async def get_filters(
-        self, filter_type: Optional[str] = None, active_only: bool = True
+        self, filter_type: Optional[str] = None, active_only: bool = True, user_id: int = 0
     ) -> list[dict[str, Any]]:
-        """Get filters, optionally filtered by type."""
+        """Get filters for a user, optionally filtered by type."""
         if not self._connection:
             raise RuntimeError("Database not connected")
-        query = "SELECT * FROM filters WHERE 1=1"
-        params: list[Any] = []
+        query = "SELECT * FROM filters WHERE user_id = ?"
+        params: list[Any] = [user_id]
         if filter_type:
             query += " AND filter_type = ?"
             params.append(filter_type)
@@ -298,10 +339,10 @@ class Database:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
-    async def clear_filters(self) -> int:
-        """Clear all filters. Returns number of deleted filters."""
+    async def clear_filters(self, user_id: int = 0) -> int:
+        """Clear all filters for a user. Returns number of deleted filters."""
         async with self.transaction() as conn:
-            cursor = await conn.execute("DELETE FROM filters")
+            cursor = await conn.execute("DELETE FROM filters WHERE user_id = ?", (user_id,))
             return cursor.rowcount
 
     # Settings operations
@@ -330,6 +371,84 @@ class Database:
                 "DELETE FROM settings WHERE key = ?", (key,)
             )
             return cursor.rowcount > 0
+
+    # Per-user settings operations
+    async def get_user_setting(self, user_id: int, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Get a user-specific setting value."""
+        if not self._connection:
+            raise RuntimeError("Database not connected")
+        async with self._connection.execute(
+            "SELECT value FROM user_settings WHERE user_id = ? AND key = ?", (user_id, key)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row["value"] if row else default
+
+    async def set_user_setting(self, user_id: int, key: str, value: str) -> None:
+        """Set a user-specific setting value."""
+        async with self.transaction() as conn:
+            await conn.execute(
+                "INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)",
+                (user_id, key, value),
+            )
+
+    # User management
+    async def get_or_create_user(self, user_id: int, username: Optional[str] = None, first_name: Optional[str] = None) -> dict[str, Any]:
+        """Get or create a user record."""
+        if not self._connection:
+            raise RuntimeError("Database not connected")
+
+        # Try to get existing user
+        async with self._connection.execute(
+            "SELECT * FROM users WHERE user_id = ?", (user_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                # Update last_active
+                await self._connection.execute(
+                    "UPDATE users SET last_active = CURRENT_TIMESTAMP WHERE user_id = ?",
+                    (user_id,)
+                )
+                await self._connection.commit()
+                return dict(row)
+
+        # Create new user
+        async with self.transaction() as conn:
+            await conn.execute(
+                "INSERT INTO users (user_id, username, first_name) VALUES (?, ?, ?)",
+                (user_id, username, first_name),
+            )
+
+        async with self._connection.execute(
+            "SELECT * FROM users WHERE user_id = ?", (user_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else {"user_id": user_id}
+
+    async def set_user_has_cv(self, user_id: int, has_cv: bool) -> None:
+        """Update user's has_cv status."""
+        async with self.transaction() as conn:
+            await conn.execute(
+                "UPDATE users SET has_cv = ? WHERE user_id = ?",
+                (has_cv, user_id),
+            )
+
+    async def get_users_with_cv(self) -> list[dict[str, Any]]:
+        """Get all users who have uploaded a CV."""
+        if not self._connection:
+            raise RuntimeError("Database not connected")
+        async with self._connection.execute(
+            "SELECT * FROM users WHERE has_cv = TRUE"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_all_users(self) -> list[dict[str, Any]]:
+        """Get all registered users."""
+        if not self._connection:
+            raise RuntimeError("Database not connected")
+        async with self._connection.execute("SELECT * FROM users") as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
     # Cleanup operations
     async def cleanup_old_messages(self, days: int = 30) -> int:

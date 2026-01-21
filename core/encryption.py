@@ -118,35 +118,80 @@ class CVEncryption:
 
 
 class CVManager:
-    """High-level CV management with encryption."""
+    """High-level CV management with encryption - supports multiple users."""
 
-    def __init__(self, encryption: CVEncryption, cv_path: Path):
+    def __init__(self, encryption: CVEncryption, cv_dir: Path):
+        """
+        Initialize CV manager.
+
+        Args:
+            encryption: CVEncryption instance
+            cv_dir: Directory to store CV files (e.g., data/)
+        """
         self._encryption = encryption
-        self._cv_path = cv_path
-        self._cached_cv: Optional[str] = None
+        self._cv_dir = cv_dir
+        self._cv_dir.mkdir(parents=True, exist_ok=True)
+        self._cached_cvs: dict[int, str] = {}
 
-    @property
-    def has_cv(self) -> bool:
-        """Check if CV is stored."""
-        return self._cv_path.exists()
+    def _get_cv_path(self, user_id: int) -> Path:
+        """Get the CV file path for a user."""
+        return self._cv_dir / f"cv_{user_id}.enc"
 
-    def set_cv(self, cv_text: str) -> None:
-        """Store encrypted CV."""
-        self._encryption.encrypt_to_file(cv_text, self._cv_path)
-        self._cached_cv = cv_text
+    def has_cv(self, user_id: int = 0) -> bool:
+        """Check if CV is stored for a user."""
+        return self._get_cv_path(user_id).exists()
 
-    def get_cv(self) -> Optional[str]:
-        """Get decrypted CV text."""
-        if self._cached_cv is not None:
-            return self._cached_cv
+    def get_users_with_cv(self) -> list[int]:
+        """Get list of user IDs that have CVs stored."""
+        users = []
+        for cv_file in self._cv_dir.glob("cv_*.enc"):
+            try:
+                user_id = int(cv_file.stem.replace("cv_", ""))
+                users.append(user_id)
+            except ValueError:
+                continue
+        return users
+
+    def save_cv(self, cv_text: str, user_id: int = 0) -> None:
+        """Store encrypted CV for a user."""
+        cv_path = self._get_cv_path(user_id)
+        self._encryption.encrypt_to_file(cv_text, cv_path)
+        self._cached_cvs[user_id] = cv_text
+
+    def get_cv(self, user_id: int = 0) -> Optional[str]:
+        """Get decrypted CV text for a user."""
+        if user_id in self._cached_cvs:
+            return self._cached_cvs[user_id]
         try:
-            self._cached_cv = self._encryption.decrypt_from_file(self._cv_path)
-            return self._cached_cv
+            cv_path = self._get_cv_path(user_id)
+            cv_text = self._encryption.decrypt_from_file(cv_path)
+            if cv_text:
+                self._cached_cvs[user_id] = cv_text
+            return cv_text
         except InvalidToken:
-            logger.error("Failed to decrypt CV - key may have changed")
+            logger.error(f"Failed to decrypt CV for user {user_id} - key may have changed")
             return None
 
-    def clear_cv(self) -> bool:
-        """Delete stored CV."""
-        self._cached_cv = None
-        return self._encryption.delete_cv(self._cv_path)
+    def clear_cv(self, user_id: int = 0) -> bool:
+        """Delete stored CV for a user."""
+        self._cached_cvs.pop(user_id, None)
+        return self._encryption.delete_cv(self._get_cv_path(user_id))
+
+    # Legacy single-user support (for migration)
+    @property
+    def legacy_cv_path(self) -> Path:
+        """Path to legacy single-user CV file."""
+        return self._cv_dir / "cv.enc"
+
+    def migrate_legacy_cv(self, user_id: int) -> bool:
+        """Migrate legacy cv.enc to user-specific file."""
+        if self.legacy_cv_path.exists() and not self.has_cv(user_id):
+            try:
+                cv_text = self._encryption.decrypt_from_file(self.legacy_cv_path)
+                if cv_text:
+                    self.save_cv(cv_text, user_id)
+                    logger.info(f"Migrated legacy CV to user {user_id}")
+                    return True
+            except InvalidToken:
+                logger.error("Failed to migrate legacy CV - decryption failed")
+        return False

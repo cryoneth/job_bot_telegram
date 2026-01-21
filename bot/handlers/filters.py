@@ -23,11 +23,15 @@ def setup_filters_router(app: "BotApp") -> Router:
     @router.message(Command("setthreshold"))
     async def cmd_set_threshold(message: Message, command: CommandObject) -> None:
         """Handle /setthreshold command."""
-        if message.from_user and not app.is_authorized(message.from_user.id):
+        if not message.from_user or not app.is_authorized(message.from_user.id):
             return
 
+        user_id = message.from_user.id
+
         if not command.args:
-            current = await app.db.get_setting("threshold", str(app.settings.match_threshold))
+            current = await app.db.get_user_setting(user_id, "threshold")
+            if not current:
+                current = await app.db.get_setting("threshold", str(app.settings.match_threshold))
             await message.answer(
                 f"Current threshold: **{current}%**\n\n"
                 "Usage: `/setthreshold <0-100>`\n"
@@ -41,7 +45,7 @@ def setup_filters_router(app: "BotApp") -> Router:
             if not 0 <= threshold <= 100:
                 raise ValueError("Must be 0-100")
 
-            await app.db.set_setting("threshold", str(threshold))
+            await app.db.set_user_setting(user_id, "threshold", str(threshold))
             await message.answer(
                 f"Match threshold set to **{threshold}%**",
                 parse_mode="Markdown",
@@ -53,8 +57,10 @@ def setup_filters_router(app: "BotApp") -> Router:
     @router.message(Command("addkeyword"))
     async def cmd_add_keyword(message: Message, command: CommandObject) -> None:
         """Handle /addkeyword command."""
-        if message.from_user and not app.is_authorized(message.from_user.id):
+        if not message.from_user or not app.is_authorized(message.from_user.id):
             return
+
+        user_id = message.from_user.id
 
         if not command.args:
             await message.answer(
@@ -65,7 +71,7 @@ def setup_filters_router(app: "BotApp") -> Router:
             return
 
         keyword = command.args.strip().lower()
-        await app.db.add_filter(FilterType.KEYWORD.value, keyword)
+        await app.db.add_filter(FilterType.KEYWORD.value, keyword, user_id=user_id)
         await message.answer(
             f"Added keyword: **{keyword}**\n"
             "Jobs containing this will score higher.",
@@ -75,8 +81,10 @@ def setup_filters_router(app: "BotApp") -> Router:
     @router.message(Command("excludekeyword"))
     async def cmd_exclude_keyword(message: Message, command: CommandObject) -> None:
         """Handle /excludekeyword command."""
-        if message.from_user and not app.is_authorized(message.from_user.id):
+        if not message.from_user or not app.is_authorized(message.from_user.id):
             return
+
+        user_id = message.from_user.id
 
         if not command.args:
             await message.answer(
@@ -87,7 +95,7 @@ def setup_filters_router(app: "BotApp") -> Router:
             return
 
         keyword = command.args.strip().lower()
-        await app.db.add_filter(FilterType.EXCLUDED.value, keyword)
+        await app.db.add_filter(FilterType.EXCLUDED.value, keyword, user_id=user_id)
         await message.answer(
             f"Excluding keyword: **{keyword}**\n"
             "Jobs containing this will be penalized.",
@@ -97,8 +105,10 @@ def setup_filters_router(app: "BotApp") -> Router:
     @router.message(Command("setlocation"))
     async def cmd_set_location(message: Message, command: CommandObject) -> None:
         """Handle /setlocation command."""
-        if message.from_user and not app.is_authorized(message.from_user.id):
+        if not message.from_user or not app.is_authorized(message.from_user.id):
             return
+
+        user_id = message.from_user.id
 
         if not command.args:
             await message.answer(
@@ -112,7 +122,7 @@ def setup_filters_router(app: "BotApp") -> Router:
             return
 
         location = command.args.strip()
-        await app.db.add_filter(FilterType.LOCATION.value, location)
+        await app.db.add_filter(FilterType.LOCATION.value, location, user_id=user_id)
         await message.answer(
             f"Added preferred location: **{location}**",
             parse_mode="Markdown",
@@ -121,8 +131,10 @@ def setup_filters_router(app: "BotApp") -> Router:
     @router.message(Command("setremote"))
     async def cmd_set_remote(message: Message, command: CommandObject) -> None:
         """Handle /setremote command."""
-        if message.from_user and not app.is_authorized(message.from_user.id):
+        if not message.from_user or not app.is_authorized(message.from_user.id):
             return
+
+        user_id = message.from_user.id
 
         if not command.args:
             await message.answer(
@@ -139,13 +151,13 @@ def setup_filters_router(app: "BotApp") -> Router:
             await message.answer("Invalid value. Use: yes, no, or any")
             return
 
-        # Remove existing remote filter
-        filters = await app.db.get_filters(FilterType.REMOTE.value)
+        # Remove existing remote filter for this user
+        filters = await app.db.get_filters(FilterType.REMOTE.value, user_id=user_id)
         for f in filters:
             await app.db.remove_filter(f["id"])
 
         # Add new remote preference
-        await app.db.add_filter(FilterType.REMOTE.value, value)
+        await app.db.add_filter(FilterType.REMOTE.value, value, user_id=user_id)
 
         preference_text = {
             "yes": "remote positions",
@@ -160,9 +172,10 @@ def setup_filters_router(app: "BotApp") -> Router:
     @router.message(Command("setseniority"))
     async def cmd_set_seniority(message: Message, command: CommandObject) -> None:
         """Handle /setseniority command."""
-        if message.from_user and not app.is_authorized(message.from_user.id):
+        if not message.from_user or not app.is_authorized(message.from_user.id):
             return
 
+        user_id = message.from_user.id
         valid_levels = [level.value for level in SeniorityLevel]
 
         if not command.args:
@@ -182,7 +195,7 @@ def setup_filters_router(app: "BotApp") -> Router:
             )
             return
 
-        await app.db.add_filter(FilterType.SENIORITY.value, level)
+        await app.db.add_filter(FilterType.SENIORITY.value, level, user_id=user_id)
         await message.answer(
             f"Added seniority preference: **{level}**",
             parse_mode="Markdown",
@@ -191,12 +204,16 @@ def setup_filters_router(app: "BotApp") -> Router:
     @router.message(Command("showfilters"))
     async def cmd_show_filters(message: Message) -> None:
         """Handle /showfilters command."""
-        if message.from_user and not app.is_authorized(message.from_user.id):
+        if not message.from_user or not app.is_authorized(message.from_user.id):
             return
 
+        user_id = message.from_user.id
+
         try:
-            filters = await app.db.get_filters()
-            threshold = await app.db.get_setting("threshold", str(app.settings.match_threshold))
+            filters = await app.db.get_filters(user_id=user_id)
+            threshold = await app.db.get_user_setting(user_id, "threshold")
+            if not threshold:
+                threshold = await app.db.get_setting("threshold", str(app.settings.match_threshold))
 
             if not filters and threshold == str(app.settings.match_threshold):
                 await message.answer(
@@ -239,12 +256,15 @@ def setup_filters_router(app: "BotApp") -> Router:
     @router.message(Command("clearfilters"))
     async def cmd_clear_filters(message: Message) -> None:
         """Handle /clearfilters command."""
-        if message.from_user and not app.is_authorized(message.from_user.id):
+        if not message.from_user or not app.is_authorized(message.from_user.id):
             return
 
+        user_id = message.from_user.id
+
         try:
-            count = await app.db.clear_filters()
-            await app.db.set_setting("threshold", str(app.settings.match_threshold))
+            count = await app.db.clear_filters(user_id=user_id)
+            # Reset user's threshold to default
+            await app.db.set_user_setting(user_id, "threshold", str(app.settings.match_threshold))
             await message.answer(
                 f"Cleared {count} filters.\n"
                 f"Threshold reset to {app.settings.match_threshold}%.",

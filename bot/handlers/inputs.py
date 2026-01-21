@@ -101,6 +101,7 @@ def setup_inputs_router(app: "BotApp") -> Router:
         """Handle required keyword input."""
         await state.clear()
 
+        user_id = message.from_user.id if message.from_user else 0
         keyword = message.text.strip().lower()
         if len(keyword) < 2:
             await message.answer(
@@ -109,7 +110,7 @@ def setup_inputs_router(app: "BotApp") -> Router:
             )
             return
 
-        await app.db.set_filter("keyword", keyword)
+        await app.db.set_filter("keyword", keyword, user_id=user_id)
         await message.answer(
             f"✅ Added required keyword: {keyword}",
             reply_markup=filters_menu(),
@@ -120,6 +121,7 @@ def setup_inputs_router(app: "BotApp") -> Router:
         """Handle excluded keyword input."""
         await state.clear()
 
+        user_id = message.from_user.id if message.from_user else 0
         keyword = message.text.strip().lower()
         if len(keyword) < 2:
             await message.answer(
@@ -128,7 +130,7 @@ def setup_inputs_router(app: "BotApp") -> Router:
             )
             return
 
-        await app.db.set_filter("excluded", keyword)
+        await app.db.set_filter("excluded", keyword, user_id=user_id)
         await message.answer(
             f"✅ Added excluded keyword: {keyword}",
             reply_markup=filters_menu(),
@@ -139,6 +141,7 @@ def setup_inputs_router(app: "BotApp") -> Router:
         """Handle location input."""
         await state.clear()
 
+        user_id = message.from_user.id if message.from_user else 0
         location = message.text.strip()
         if len(location) < 2:
             await message.answer(
@@ -147,7 +150,7 @@ def setup_inputs_router(app: "BotApp") -> Router:
             )
             return
 
-        await app.db.set_filter("location", location)
+        await app.db.set_filter("location", location, user_id=user_id)
         await message.answer(
             f"✅ Location set to: {location}",
             reply_markup=filters_menu(),
@@ -158,6 +161,7 @@ def setup_inputs_router(app: "BotApp") -> Router:
         """Handle CV upload."""
         await state.clear()
 
+        user_id = message.from_user.id if message.from_user else 0
         cv_text = None
 
         # Check for document
@@ -165,7 +169,7 @@ def setup_inputs_router(app: "BotApp") -> Router:
             if message.document.file_size > 1024 * 1024:  # 1MB limit
                 await message.answer(
                     "❌ File too large. Max 1MB.",
-                    reply_markup=cv_menu(app.matcher.has_cv),
+                    reply_markup=cv_menu(app.matcher.has_cv(user_id)),
                 )
                 return
 
@@ -176,7 +180,7 @@ def setup_inputs_router(app: "BotApp") -> Router:
             except Exception as e:
                 await message.answer(
                     f"❌ Error reading file: {e}",
-                    reply_markup=cv_menu(app.matcher.has_cv),
+                    reply_markup=cv_menu(app.matcher.has_cv(user_id)),
                 )
                 return
         elif message.text:
@@ -185,15 +189,17 @@ def setup_inputs_router(app: "BotApp") -> Router:
         if not cv_text or len(cv_text) < 50:
             await message.answer(
                 "❌ CV text too short. Please provide more details.",
-                reply_markup=cv_menu(app.matcher.has_cv),
+                reply_markup=cv_menu(app.matcher.has_cv(user_id)),
             )
             return
 
-        # Save encrypted CV
-        app.cv_manager.save_cv(cv_text)
-        app.matcher.set_cv(cv_text)
+        # Save encrypted CV for this user
+        app.cv_manager.save_cv(cv_text, user_id)
+        app.matcher.set_cv(cv_text, user_id)
+        await app.db.set_user_has_cv(user_id, True)
 
-        skills_count = len(app.matcher._cv_skills) if app.matcher._cv_skills else 0
+        summary = app.matcher.get_cv_summary(user_id)
+        skills_count = summary.get("skills_count", 0)
 
         await message.answer(
             f"✅ CV saved and encrypted!\n\n"
@@ -206,7 +212,9 @@ def setup_inputs_router(app: "BotApp") -> Router:
         """Handle test job input."""
         await state.clear()
 
-        if not app.matcher.has_cv:
+        user_id = message.from_user.id if message.from_user else 0
+
+        if not app.matcher.has_cv(user_id):
             await message.answer(
                 "❌ No CV set. Please upload your CV first.",
                 reply_markup=main_menu(),
