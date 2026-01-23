@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -21,6 +21,11 @@ from bot.menu import (
     remote_options,
     threshold_options,
     channel_list_keyboard,
+    MENU_CHANNELS,
+    MENU_FILTERS,
+    MENU_CV,
+    MENU_SETTINGS,
+    MENU_STATUS,
 )
 
 if TYPE_CHECKING:
@@ -43,13 +48,87 @@ def setup_callbacks_router(app: "BotApp") -> Router:
     """Set up the callbacks router."""
     router = Router()
 
+    # ===== Reply keyboard handlers (main menu buttons) =====
+
+    @router.message(F.text == MENU_CHANNELS)
+    async def menu_channels(message: Message):
+        """Handle Channels button from reply keyboard."""
+        channels = await app.db.get_channels()
+        count = len(channels)
+        await message.answer(
+            f"**📡 Channel Management**\n\nCurrently monitoring {count} channel(s).",
+            reply_markup=channels_menu(),
+            parse_mode="Markdown",
+        )
+
+    @router.message(F.text == MENU_FILTERS)
+    async def menu_filters(message: Message):
+        """Handle Filters button from reply keyboard."""
+        await message.answer(
+            "**🎯 Filter Settings**\n\nCustomize which jobs match your preferences.",
+            reply_markup=filters_menu(),
+            parse_mode="Markdown",
+        )
+
+    @router.message(F.text == MENU_CV)
+    async def menu_cv(message: Message):
+        """Handle CV button from reply keyboard."""
+        user_id = message.from_user.id if message.from_user else 0
+        has_cv = app.matcher.has_cv(user_id)
+        status = "✅ CV loaded" if has_cv else "❌ No CV uploaded"
+        await message.answer(
+            f"**📄 CV Management**\n\n{status}\n\nUpload your CV to enable job matching.",
+            reply_markup=cv_menu(has_cv),
+            parse_mode="Markdown",
+        )
+
+    @router.message(F.text == MENU_SETTINGS)
+    async def menu_settings(message: Message):
+        """Handle Settings button from reply keyboard."""
+        user_id = message.from_user.id if message.from_user else 0
+        threshold = await app.db.get_user_setting(user_id, "threshold")
+        if not threshold:
+            threshold = await app.db.get_setting("threshold", str(app.settings.match_threshold))
+        await message.answer(
+            f"**⚙️ Settings**\n\n"
+            f"Match threshold: {threshold}/100\n"
+            f"Status: {'⏸ Paused' if app.is_paused else '▶️ Running'}",
+            reply_markup=settings_menu(app.is_paused),
+            parse_mode="Markdown",
+        )
+
+    @router.message(F.text == MENU_STATUS)
+    async def menu_status(message: Message):
+        """Handle Status button from reply keyboard."""
+        user_id = message.from_user.id if message.from_user else 0
+        channels = await app.db.get_channels(active_only=True)
+        threshold = await app.db.get_user_setting(user_id, "threshold")
+        if not threshold:
+            threshold = await app.db.get_setting("threshold", str(app.settings.match_threshold))
+
+        status_lines = [
+            "**📊 Bot Status**",
+            "",
+            f"Status: {'⏸ Paused' if app.is_paused else '✅ Running'}",
+            f"Channels: {len(channels)} monitored",
+            f"CV: {'✅ Loaded' if app.matcher.has_cv(user_id) else '❌ Not set'}",
+            f"Threshold: {threshold}/100",
+        ]
+
+        await message.answer(
+            "\n".join(status_lines),
+            reply_markup=back_to_main_menu(),
+            parse_mode="Markdown",
+        )
+
+    # ===== Inline callback handlers (for sub-menus) =====
+
     @router.callback_query(F.data == "menu:main")
     async def show_main_menu(callback: CallbackQuery):
-        """Show the main menu."""
+        """Return to main menu (just acknowledge, reply keyboard is persistent)."""
         await callback.message.edit_text(
-            "**Job Monitor Bot**\n\nSelect an option:",
-            reply_markup=main_menu(),
-            parse_mode="Markdown",
+            "Use the menu below to navigate.",
+            reply_markup=None,
         )
         await callback.answer()
 

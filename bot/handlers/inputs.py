@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import logging
 import re
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from aiogram import F, Router
@@ -21,6 +22,149 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def clean_pdf_text(text: str) -> str:
+    """
+    Clean up PDF text that has broken words due to font rendering issues.
+
+    Fixes patterns like "communit y" -> "community", "amb assador" -> "ambassador"
+    """
+    # Common words that get broken in PDFs - fix them explicitly
+    # This is more reliable than regex guessing
+    broken_words = {
+        # Community/Marketing terms
+        "communit y": "community",
+        "Communit y": "Community",
+        "amb assador": "ambassador",
+        "Amb assador": "Ambassador",
+        "gr o wth": "growth",
+        "gr owth": "growth",
+        "Gr o wth": "Growth",
+        "Gr owth": "Growth",
+        "moder ation": "moderation",
+        "moder at or": "moderator",
+        "Moder at or": "Moderator",
+        "r et ention": "retention",
+        "ret ention": "retention",
+        "eng agement": "engagement",
+        "distr ibution": "distribution",
+        "c amp aigns": "campaigns",
+        "camp aigns": "campaigns",
+        "contr ibut": "contribut",
+        "Contr ibut": "Contribut",
+        "p artner": "partner",
+        "P artner": "Partner",
+        "ec osyst em": "ecosystem",
+        "e cosyst em": "ecosystem",
+        "Ec osyst em": "Ecosystem",
+        "le ad": "lead",
+        "Le ad": "Lead",
+        "cr e at or": "creator",
+        "Cr e at or": "Creator",
+        "syst em": "system",
+        "Syst em": "System",
+        "t e am": "team",
+        "T e am": "Team",
+        "onb oarding": "onboarding",
+        "Onb oarding": "Onboarding",
+        "g amif": "gamif",
+        "G amif": "Gamif",
+        # Platforms
+        "T elegram": "Telegram",
+        "Discor d": "Discord",
+        "F ar c ast er": "Farcaster",
+        "F arcaster": "Farcaster",
+        "T witter": "Twitter",
+        "Link edIn": "LinkedIn",
+        "N otion": "Notion",
+        # Tech terms
+        "dev eloper": "developer",
+        "Dev eloper": "Developer",
+        "eng ineer": "engineer",
+        "Eng ineer": "Engineer",
+        "m anager": "manager",
+        "M anager": "Manager",
+        "dir ect or": "director",
+        "Dir ect or": "Director",
+        "e xper ience": "experience",
+        "e xperience": "experience",
+        "E xper ience": "Experience",
+        "r esponsibilit": "responsibilit",
+        "R esponsibilit": "Responsibilit",
+        "r equirement": "requirement",
+        "R equirement": "Requirement",
+        "anal yt": "analyt",
+        "Anal yt": "Analyt",
+        "m arket": "market",
+        "M arket": "Market",
+        "r emote": "remote",
+        "R emote": "Remote",
+        # Web3 terms
+        "block chain": "blockchain",
+        "Block chain": "Blockchain",
+        "cr ypt o": "crypto",
+        "crypt o": "crypto",
+        "Cr ypt o": "Crypto",
+        "w eb3": "web3",
+        "W eb3": "Web3",
+        "t oken": "token",
+        "T oken": "Token",
+        "T GE": "TGE",
+        "K OL": "KOL",
+        "K OLs": "KOLs",
+        "def i": "defi",
+        "Def i": "Defi",
+        "D eFi": "DeFi",
+        # Common words
+        "str ength": "strength",
+        "str uct ur": "structur",
+        "struct ur": "structur",
+        "oper at": "operat",
+        "Oper at": "Operat",
+        "or ganic": "organic",
+        "Or ganic": "Organic",
+        "t raction": "traction",
+        "sc aled": "scaled",
+        "Sc aled": "Scaled",
+        "tr ained": "trained",
+        "dr iv en": "driven",
+        "driv en": "driven",
+        "Dr iv en": "Driven",
+        "e ar l y": "early",
+        "ear l y": "early",
+        "E ar l y": "Early",
+        "z er o": "zero",
+        "zer o": "zero",
+        "glob al": "global",
+        "Glob al": "Global",
+        "int o": "into",
+        "fr om": "from",
+        "acr oss": "across",
+        "t o ": "to ",
+        "tur ning": "turning",
+        "Tur ning": "Turning",
+        "f ocused": "focused",
+        "F ocused": "Focused",
+        "Hir ed": "Hired",
+        "hir ed": "hired",
+        "Buil t": "Built",
+        "buil t": "built",
+        "dr iving": "driving",
+        "Dr iving": "Driving",
+    }
+
+    for broken, fixed in broken_words.items():
+        text = text.replace(broken, fixed)
+
+    # Fix spaced-out capital letters: "K E Y" -> "KEY"
+    text = re.sub(r'\b([A-Z]) ([A-Z]) ([A-Z])\b', r'\1\2\3', text)
+    text = re.sub(r'\b([A-Z]) ([A-Z])\b', r'\1\2', text)
+
+    # Clean up multiple spaces
+    text = re.sub(r'  +', ' ', text)
+
+    return text
+
+
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     """Extract text from PDF bytes."""
     try:
@@ -31,7 +175,9 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
             text = page.extract_text()
             if text:
                 text_parts.append(text)
-        return "\n".join(text_parts)
+        raw_text = "\n".join(text_parts)
+        # Clean up broken text from PDF rendering issues
+        return clean_pdf_text(raw_text)
     except Exception as e:
         logger.error(f"Error extracting PDF text: {e}")
         raise
@@ -260,8 +406,8 @@ def setup_inputs_router(app: "BotApp") -> Router:
             channel_name="Test",
             message_id=0,
             text=test_text,
-            date=None,
-            message_link="",
+            date=datetime.now(),
+            link="",
         )
 
         await message.answer("Processing...")

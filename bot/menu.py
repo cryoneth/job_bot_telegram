@@ -1,24 +1,41 @@
-"""Interactive menu system with inline keyboards."""
+"""Interactive menu system with reply and inline keyboards."""
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+)
 
 
-def main_menu() -> InlineKeyboardMarkup:
-    """Create the main menu keyboard."""
+# Main menu button texts (used for matching in handlers)
+MENU_CHANNELS = "📡 Channels"
+MENU_FILTERS = "🎯 Filters"
+MENU_CV = "📄 CV"
+MENU_SETTINGS = "⚙️ Settings"
+MENU_STATUS = "📊 Status"
+
+
+def main_menu() -> ReplyKeyboardMarkup:
+    """Create the main menu as a persistent reply keyboard."""
     keyboard = [
         [
-            InlineKeyboardButton(text="📡 Channels", callback_data="menu:channels"),
-            InlineKeyboardButton(text="🎯 Filters", callback_data="menu:filters"),
+            KeyboardButton(text=MENU_CHANNELS),
+            KeyboardButton(text=MENU_FILTERS),
         ],
         [
-            InlineKeyboardButton(text="📄 CV", callback_data="menu:cv"),
-            InlineKeyboardButton(text="⚙️ Settings", callback_data="menu:settings"),
+            KeyboardButton(text=MENU_CV),
+            KeyboardButton(text=MENU_SETTINGS),
         ],
         [
-            InlineKeyboardButton(text="📊 Status", callback_data="menu:status"),
+            KeyboardButton(text=MENU_STATUS),
         ],
     ]
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard,
+        resize_keyboard=True,  # Make buttons smaller
+        is_persistent=True,  # Keep visible
+    )
 
 
 def channels_menu() -> InlineKeyboardMarkup:
@@ -100,9 +117,9 @@ def settings_menu(is_paused: bool = False) -> InlineKeyboardMarkup:
 
 
 def back_to_main_menu() -> InlineKeyboardMarkup:
-    """Simple back button to main menu."""
+    """Simple dismiss button (main menu is persistent reply keyboard)."""
     keyboard = [
-        [InlineKeyboardButton(text="« Back to Menu", callback_data="menu:main")],
+        [InlineKeyboardButton(text="✓ Done", callback_data="menu:main")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
